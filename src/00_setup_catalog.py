@@ -1,5 +1,5 @@
 # Databricks notebook source
-# Cria o namespace do projeto: catálogo, schemas das camadas e volume de landing.
+# Cria o namespace do projeto: catálogo, schemas das camadas e os volumes.
 # Executado pelo job declarado em resources/job_setup.yml.
 
 # COMMAND ----------
@@ -21,9 +21,13 @@ spark.sql(f"CREATE CATALOG IF NOT EXISTS {catalog}")
 for schema, comment in SCHEMAS.items():
     spark.sql(f"CREATE SCHEMA IF NOT EXISTS {catalog}.{schema} COMMENT '{comment}'")
 
+# Landing recebe os CSVs extraidos; checkpoints guarda o controle do Auto Loader.
+# Ficam em volumes separados para que o leitor nao enxergue o proprio estado.
 spark.sql(f"CREATE VOLUME IF NOT EXISTS {catalog}.bronze.landing")
+spark.sql(f"CREATE VOLUME IF NOT EXISTS {catalog}.ops.checkpoints")
 
 # COMMAND ----------
 
 display(spark.sql(f"SHOW SCHEMAS IN {catalog}"))
 display(spark.sql(f"SHOW VOLUMES IN {catalog}.bronze"))
+display(spark.sql(f"SHOW VOLUMES IN {catalog}.ops"))

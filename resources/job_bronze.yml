@@ -1,0 +1,18 @@
+resources:
+  jobs:
+    bronze_ingest:
+      name: bronze_ingest
+      tasks:
+        - task_key: landing
+          notebook_task:
+            notebook_path: ../src/10_landing_anp.py
+            base_parameters:
+              catalog: ${var.catalog}
+
+        - task_key: autoloader
+          depends_on:
+            - task_key: landing
+          notebook_task:
+            notebook_path: ../src/20_bronze_autoloader.py
+            base_parameters:
+              catalog: ${var.catalog}
