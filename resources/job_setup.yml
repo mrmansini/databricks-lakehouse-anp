@@ -1,0 +1,10 @@
+resources:
+  jobs:
+    setup_catalog:
+      name: setup_catalog
+      tasks:
+        - task_key: create_namespaces
+          notebook_task:
+            notebook_path: ../src/00_setup_catalog.py
+            base_parameters:
+              catalog: ${var.catalog}

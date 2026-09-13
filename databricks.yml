@@ -1,0 +1,17 @@
+bundle:
+  name: databricks-lakehouse-anp
+
+variables:
+  catalog:
+    description: Catálogo do Unity Catalog que recebe as camadas do projeto.
+    default: anp
+
+include:
+  - resources/*.yml
+
+targets:
+  dev:
+    default: true
+    mode: development
+    workspace:
+      host: https://dbc-2caed01a-a57a.cloud.databricks.com/
