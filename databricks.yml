@@ -4,7 +4,7 @@ bundle:
 variables:
   catalog:
     description: Catálogo do Unity Catalog que recebe as camadas do projeto.
-    default: anp_teste
+    default: anp
 
 include:
   - resources/*.yml
