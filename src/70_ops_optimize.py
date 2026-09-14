@@ -5,6 +5,9 @@
 # comparacoes sobrevivam a sessao.
 # A primeira execucao de cada consulta e descartada por medir partida a frio, e o
 # valor usado e a mediana das repeticoes, nao a media.
+# Entre a linha de base e o OPTIMIZE roda uma fase de controle, que repete as
+# mesmas consultas sem alterar nada: se ela sozinha ja mostrar ganho, o efeito
+# medido nas fases seguintes e aquecimento do ambiente, e nao layout.
 # Executado pelo job declarado em resources/job_ops.yml.
 
 # COMMAND ----------
@@ -150,6 +153,11 @@ mede_fase("linha_de_base")
 
 # COMMAND ----------
 
+# Placebo: nada foi alterado entre esta medicao e a anterior.
+mede_fase("controle_sem_mudanca")
+
+# COMMAND ----------
+
 t0 = time.perf_counter()
 display(spark.sql(f"OPTIMIZE {FACT}"))
 print(f"OPTIMIZE levou {time.perf_counter() - t0:.1f}s")
@@ -223,3 +231,36 @@ display(
 # COMMAND ----------
 
 display(spark.sql(f"DESCRIBE HISTORY {FACT}"))
+
+# COMMAND ----------
+
+# O ganho atribuivel ao layout e o que excede o ganho ja observado no controle.
+display(
+    spark.sql(
+        f"""
+        WITH recente AS (
+            SELECT * FROM {RUNS} WHERE medido_em >= current_timestamp() - INTERVAL 2 HOURS
+        ),
+        base AS (
+            SELECT consulta, mediana_seg AS base_seg FROM recente WHERE fase = 'linha_de_base'
+        ),
+        controle AS (
+            SELECT consulta, mediana_seg AS controle_seg
+            FROM recente WHERE fase = 'controle_sem_mudanca'
+        )
+        SELECT
+            r.consulta,
+            r.fase,
+            round(b.base_seg, 2)     AS base_seg,
+            round(c.controle_seg, 2) AS controle_seg,
+            round(r.mediana_seg, 2)  AS fase_seg,
+            round(100 * (b.base_seg - c.controle_seg) / b.base_seg, 1) AS ganho_do_aquecimento_pct,
+            round(100 * (c.controle_seg - r.mediana_seg) / b.base_seg, 1) AS ganho_do_layout_pct
+        FROM recente r
+        JOIN base b     ON b.consulta = r.consulta
+        JOIN controle c ON c.consulta = r.consulta
+        WHERE r.fase NOT IN ('linha_de_base', 'controle_sem_mudanca')
+        ORDER BY r.consulta, r.fase
+        """
+    )
+)
