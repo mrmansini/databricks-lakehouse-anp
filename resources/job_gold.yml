@@ -1,0 +1,18 @@
+resources:
+  jobs:
+    gold_build:
+      name: gold_build
+      tasks:
+        - task_key: dimensions
+          notebook_task:
+            notebook_path: ../src/50_gold_dimensions.py
+            base_parameters:
+              catalog: ${var.catalog}
+
+        - task_key: fact
+          depends_on:
+            - task_key: dimensions
+          notebook_task:
+            notebook_path: ../src/60_gold_fact.py
+            base_parameters:
+              catalog: ${var.catalog}
