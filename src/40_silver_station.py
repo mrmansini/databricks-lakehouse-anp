@@ -1,9 +1,11 @@
 # Databricks notebook source
 # Deduplica a silver pela chave natural e constroi a dimensao de postos com
 # versionamento SCD2 a partir do historico completo de observacoes.
-# A deduplicacao e determinista por construcao: as quatro chaves com precos
-# divergentes nao tem resposta no dado, entao a escolha e arbitraria, mas precisa
-# ser reproduzivel. As linhas descartadas ficam em ops.dedup_discarded.
+# A bandeira entra pelo rotulo canonico de silver.brand_alias: sem isso, a troca
+# de rotulo no cadastro da ANP abriria versao nova sem mudanca no mundo real.
+# A deduplicacao e determinista por construcao: as chaves com precos divergentes
+# nao tem resposta no dado, entao a escolha e arbitraria, mas precisa ser
+# reproduzivel. As linhas descartadas ficam em ops.dedup_discarded.
 # O Delta nao tem o equivalente a uma constraint de exclusao por intervalo, entao
 # a nao sobreposicao das vigencias e verificada apos a carga, nao garantida antes.
 # Executado pelo job declarado em resources/job_silver.yml.
@@ -15,6 +17,7 @@ catalog = dbutils.widgets.get("catalog")
 
 CLEAN = f"{catalog}.silver.price_clean"
 OBSERVATION = f"{catalog}.silver.price_observation"
+BRAND_ALIAS = f"{catalog}.silver.brand_alias"
 DIM_STATION = f"{catalog}.silver.dim_station"
 DISCARDED = f"{catalog}.ops.dedup_discarded"
 SNAPSHOT_CONFLICTS = f"{catalog}.ops.station_snapshot_conflicts"
@@ -81,6 +84,20 @@ display(
 
 # COMMAND ----------
 
+# O rotulo canonico substitui o rotulo cru antes de qualquer comparacao de versao.
+spark.sql(
+    f"""
+    CREATE OR REPLACE TEMPORARY VIEW observacao_canonica AS
+    SELECT
+        o.* EXCEPT (brand),
+        coalesce(a.canonical_brand, o.brand) AS brand
+    FROM {OBSERVATION} o
+    LEFT JOIN {BRAND_ALIAS} a ON a.source_brand = o.brand
+    """
+)
+
+# COMMAND ----------
+
 # Um posto aparece uma vez por produto em cada data. Se a grafia dos atributos
 # variar entre produtos, o posto teria dois estados no mesmo dia. Medir antes de
 # montar as versoes.
@@ -92,7 +109,7 @@ spark.sql(
         collection_date,
         {", ".join(ATRIBUTOS)},
         {HASH_ATRIBUTOS} AS attribute_hash
-    FROM {OBSERVATION}
+    FROM observacao_canonica
     """
 )
 
@@ -188,6 +205,7 @@ display(
         SELECT
             count(*)                         AS versoes,
             count(DISTINCT reseller_cnpj)    AS postos,
+            count(DISTINCT brand)            AS bandeiras,
             count_if(is_current)             AS versoes_correntes,
             min(valid_from)                  AS primeira_vigencia,
             max(valid_from)                  AS ultima_abertura
@@ -231,19 +249,39 @@ display(
 # COMMAND ----------
 
 # Invariante 3: toda observacao encontra exatamente uma versao vigente.
+# A contagem e de versoes distintas: a tabela de observacoes tem uma linha por
+# produto, entao contar linhas do join mediria combustiveis, nao versoes.
 display(
     spark.sql(
         f"""
         SELECT count(*) AS observacoes_sem_versao_unica FROM (
-            SELECT o.reseller_cnpj, o.collection_date, count(d.station_key) AS versoes
+            SELECT o.reseller_cnpj, o.collection_date, count(DISTINCT d.station_key) AS versoes
             FROM {OBSERVATION} o
             LEFT JOIN {DIM_STATION} d
                 ON d.reseller_cnpj = o.reseller_cnpj
                AND o.collection_date >= d.valid_from
                AND o.collection_date <  d.valid_to
             GROUP BY ALL
-            HAVING count(d.station_key) <> 1
+            HAVING count(DISTINCT d.station_key) <> 1
         )
+        """
+    )
+)
+
+# COMMAND ----------
+
+# Mudancas de bandeira que sobraram apos a consolidacao: sao os eventos que a
+# camada gold estuda.
+display(
+    spark.sql(
+        f"""
+        SELECT count(*) AS trocas_de_bandeira FROM (
+            SELECT
+                brand,
+                lag(brand) OVER (PARTITION BY reseller_cnpj ORDER BY valid_from) AS bandeira_anterior
+            FROM {DIM_STATION}
+        )
+        WHERE bandeira_anterior IS NOT NULL AND brand IS DISTINCT FROM bandeira_anterior
         """
     )
 )
