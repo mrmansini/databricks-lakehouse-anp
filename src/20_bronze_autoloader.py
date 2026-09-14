@@ -4,9 +4,14 @@
 # esperado antes da renomeacao posicional: o Auto Loader casa colunas por nome,
 # entao declarar nomes proprios faria todo o conteudo cair na coluna de resgate.
 # A renomeacao posicional tambem descarta o BOM presente no nome da primeira coluna.
+# A comparacao dobra acento e caixa: o leitor remove os acentos dos nomes de
+# coluna ao fixar o schema, entao a grafia do cabecalho nao serve como contrato.
+# O que a validacao garante e a identidade e a ordem das colunas.
 # Executado pelo job declarado em resources/job_bronze.yml.
 
 # COMMAND ----------
+
+import unicodedata
 
 from pyspark.sql.functions import col, current_timestamp
 
@@ -62,6 +67,13 @@ COLUNAS_DESTINO = [
     "brand",
 ]
 
+
+def chave(nome):
+    """Reduz um nome de coluna a uma chave comparavel: sem BOM, sem acento, minusculo."""
+    limpo = unicodedata.normalize("NFKD", nome.replace("\ufeff", "").strip())
+    return "".join(ch for ch in limpo if not unicodedata.combining(ch)).lower()
+
+
 # COMMAND ----------
 
 if full_refresh:
@@ -87,16 +99,23 @@ leitura = (
 # COMMAND ----------
 
 origem = [c for c in leitura.columns if not c.startswith("_")]
-normalizado = [c.replace("\ufeff", "").strip() for c in origem]
+lido = [chave(c) for c in origem]
+esperado = [chave(c) for c in LAYOUT_ESPERADO]
 
-if normalizado != LAYOUT_ESPERADO:
-    faltando = [c for c in LAYOUT_ESPERADO if c not in normalizado]
-    sobrando = [c for c in normalizado if c not in LAYOUT_ESPERADO]
+if lido != esperado:
+    if len(lido) != len(esperado):
+        detalhe = f"contagem divergente: {len(lido)} colunas lidas, {len(esperado)} esperadas"
+    else:
+        detalhe = "\n".join(
+            f"posicao {i}: lido '{a}' != esperado '{b}'"
+            for i, (a, b) in enumerate(zip(lido, esperado))
+            if a != b
+        )
     raise ValueError(
         "layout divergente do esperado.\n"
-        f"lido:     {normalizado}\n"
-        f"faltando: {faltando}\n"
-        f"sobrando: {sobrando}"
+        f"lido:     {lido}\n"
+        f"esperado: {esperado}\n"
+        f"{detalhe}"
     )
 
 print(f"layout validado: {len(origem)} colunas na ordem esperada")
