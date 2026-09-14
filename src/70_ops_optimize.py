@@ -14,6 +14,7 @@
 
 import statistics
 import time
+import uuid
 from datetime import datetime, timezone
 
 dbutils.widgets.text("catalog", "anp")
@@ -23,6 +24,10 @@ dbutils.widgets.dropdown("aplicar_clustering", "true", ["false", "true"])
 catalog = dbutils.widgets.get("catalog")
 repeticoes = int(dbutils.widgets.get("repeticoes"))
 aplicar_clustering = dbutils.widgets.get("aplicar_clustering") == "true"
+
+# Identifica esta execucao: sem ele, duas execucoes na mesma janela de tempo se
+# misturam na comparacao entre fases.
+RUN_ID = uuid.uuid4().hex[:12]
 
 FACT = f"{catalog}.gold.fct_price_observation"
 WEEKLY = f"{catalog}.gold.weekly_price"
@@ -37,6 +42,7 @@ CNPJ_EXEMPLO = "14033566000124"
 spark.sql(
     f"""
     CREATE TABLE IF NOT EXISTS {RUNS} (
+        run_id          STRING,
         fase            STRING,
         consulta        STRING,
         execucoes       INT,
@@ -108,6 +114,7 @@ def mede_fase(fase):
         uteis = tempos[1:]  # descarta a partida a frio
         registros.append(
             (
+                RUN_ID,
                 fase,
                 nome,
                 len(uteis),
@@ -123,11 +130,11 @@ def mede_fase(fase):
         print(f"{fase} · {nome}: mediana {statistics.median(uteis):.2f}s de {tempos}")
 
     colunas = [
-        "fase", "consulta", "execucoes", "mediana_seg", "minimo_seg", "maximo_seg",
+        "run_id", "fase", "consulta", "execucoes", "mediana_seg", "minimo_seg", "maximo_seg",
         "num_files", "size_bytes", "clustering_cols", "medido_em",
     ]
     spark.createDataFrame(registros, colunas).write.mode("append").saveAsTable(RUNS)
-    print(f"{fase}: {num_files} arquivos, {size_bytes / 1e6:.1f} MB, clustering '{cols}'")
+    print(f"[{RUN_ID}] {fase}: {num_files} arquivos, {size_bytes / 1e6:.1f} MB, clustering '{cols}'")
 
 
 # COMMAND ----------
@@ -197,7 +204,7 @@ display(
         SELECT consulta, fase, round(mediana_seg, 2) AS mediana_seg,
                num_files, round(size_bytes / 1e6, 1) AS size_mb, clustering_cols
         FROM {RUNS}
-        WHERE medido_em >= current_timestamp() - INTERVAL 2 HOURS
+        WHERE run_id = '{RUN_ID}'
         ORDER BY consulta, medido_em
         """
     )
@@ -210,7 +217,7 @@ display(
     spark.sql(
         f"""
         WITH recente AS (
-            SELECT * FROM {RUNS} WHERE medido_em >= current_timestamp() - INTERVAL 2 HOURS
+            SELECT * FROM {RUNS} WHERE run_id = '{RUN_ID}'
         ),
         base AS (
             SELECT consulta, mediana_seg AS base_seg FROM recente WHERE fase = 'linha_de_base'
@@ -239,7 +246,7 @@ display(
     spark.sql(
         f"""
         WITH recente AS (
-            SELECT * FROM {RUNS} WHERE medido_em >= current_timestamp() - INTERVAL 2 HOURS
+            SELECT * FROM {RUNS} WHERE run_id = '{RUN_ID}'
         ),
         base AS (
             SELECT consulta, mediana_seg AS base_seg FROM recente WHERE fase = 'linha_de_base'

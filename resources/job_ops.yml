@@ -10,3 +10,13 @@ resources:
               catalog: ${var.catalog}
               repeticoes: "4"
               aplicar_clustering: "true"
+
+    ops_bench_engines:
+      name: ops_bench_engines
+      tasks:
+        - task_key: spark_vs_pandas
+          notebook_task:
+            notebook_path: ../src/80_bench_spark_pandas.py
+            base_parameters:
+              catalog: ${var.catalog}
+              repeticoes: "3"
