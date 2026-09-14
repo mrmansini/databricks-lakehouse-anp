@@ -2,6 +2,8 @@
 # Baixa os zips semestrais da ANP e grava o CSV extraido no volume de landing.
 # O nome do arquivo carrega o hash do zip de origem, para que uma republicacao
 # do mesmo semestre entre como arquivo novo na ingestao.
+# O registro de auditoria e gravado a cada semestre, e nao ao final do laco:
+# uma falha no meio da execucao deixaria arquivos no volume sem registro.
 # Executado pelo job declarado em resources/job_bronze.yml.
 
 # COMMAND ----------
@@ -27,12 +29,23 @@ semesters = [s.strip() for s in dbutils.widgets.get("semesters").split(",") if s
 BASE = "https://www.gov.br/anp/pt-br/centrais-de-conteudo/dados-abertos/arquivos/shpc/dsas/ca"
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 VOLUME = f"/Volumes/{catalog}/bronze/landing"
+TABELA_AUDITORIA = f"{catalog}.ops.landing_files"
+
+COLUNAS_AUDITORIA = [
+    "semester",
+    "zip_sha256",
+    "zip_bytes",
+    "csv_name",
+    "csv_bytes",
+    "csv_lines",
+    "downloaded_at",
+]
 
 # COMMAND ----------
 
 spark.sql(
     f"""
-    CREATE TABLE IF NOT EXISTS {catalog}.ops.landing_files (
+    CREATE TABLE IF NOT EXISTS {TABELA_AUDITORIA} (
         semester       STRING,
         zip_sha256     STRING,
         zip_bytes      BIGINT,
@@ -44,11 +57,28 @@ spark.sql(
     """
 )
 
+registrados = {
+    linha.csv_name
+    for linha in spark.table(TABELA_AUDITORIA).select("csv_name").distinct().collect()
+}
+print(f"arquivos ja registrados na auditoria: {len(registrados)}")
+
 # COMMAND ----------
 
 
-def fetch_semester(semester):
-    """Baixa um semestre e grava cada CSV do zip no volume. Devolve os registros gravados."""
+def registrar(linhas):
+    """Grava o registro de auditoria de um semestre, encerrando a unidade de trabalho."""
+    if not linhas:
+        return
+    (
+        spark.createDataFrame(linhas, COLUNAS_AUDITORIA)
+        .write.mode("append")
+        .saveAsTable(TABELA_AUDITORIA)
+    )
+
+
+def processar_semestre(semester):
+    """Baixa um semestre, grava os CSVs ausentes e registra o que ainda nao esta na auditoria."""
     url = f"{BASE}/ca-{semester}.zip"
     response = requests.get(url, timeout=300, headers=HEADERS)
     response.raise_for_status()
@@ -61,7 +91,7 @@ def fetch_semester(semester):
 
     payload = response.content
     zip_sha = hashlib.sha256(payload).hexdigest()
-    registros = []
+    linhas_auditoria = []
 
     with zipfile.ZipFile(io.BytesIO(payload)) as archive:
         membros = [m for m in archive.infolist() if m.filename.lower().endswith(".csv")]
@@ -74,16 +104,19 @@ def fetch_semester(semester):
             destino = f"{VOLUME}/{csv_name}"
 
             if os.path.exists(destino):
-                print(f"{semester}: ja presente como {csv_name}")
-                continue
+                print(f"{semester}: {csv_name} ja no volume")
+            else:
+                with archive.open(membro) as origem, open(destino, "wb") as saida:
+                    shutil.copyfileobj(origem, saida, length=8 * 1024 * 1024)
+                print(f"{semester}: gravado {csv_name}")
 
-            with archive.open(membro) as origem, open(destino, "wb") as saida:
-                shutil.copyfileobj(origem, saida, length=8 * 1024 * 1024)
+            if csv_name in registrados:
+                continue
 
             with open(destino, "rb") as f:
                 linhas = sum(1 for _ in f)
 
-            registros.append(
+            linhas_auditoria.append(
                 (
                     semester,
                     zip_sha,
@@ -94,34 +127,20 @@ def fetch_semester(semester):
                     datetime.now(timezone.utc),
                 )
             )
-            print(f"{semester}: gravado {csv_name} ({linhas:,} linhas fisicas)")
+            registrados.add(csv_name)
+            print(f"{semester}: registrado {csv_name} ({linhas:,} linhas fisicas)")
 
-    return registros
+    registrar(linhas_auditoria)
+    return len(linhas_auditoria)
 
 
 # COMMAND ----------
 
-novos = []
+total = 0
 for semester in semesters:
-    novos.extend(fetch_semester(semester))
+    total += processar_semestre(semester)
 
-if novos:
-    colunas = [
-        "semester",
-        "zip_sha256",
-        "zip_bytes",
-        "csv_name",
-        "csv_bytes",
-        "csv_lines",
-        "downloaded_at",
-    ]
-    (
-        spark.createDataFrame(novos, colunas)
-        .write.mode("append")
-        .saveAsTable(f"{catalog}.ops.landing_files")
-    )
-
-print(f"arquivos novos nesta execucao: {len(novos)}")
+print(f"registros novos de auditoria nesta execucao: {total}")
 
 # COMMAND ----------
 
@@ -129,7 +148,7 @@ display(
     spark.sql(
         f"""
         SELECT semester, csv_name, csv_bytes, csv_lines, downloaded_at
-        FROM {catalog}.ops.landing_files
+        FROM {TABELA_AUDITORIA}
         ORDER BY semester, csv_name
         """
     )
