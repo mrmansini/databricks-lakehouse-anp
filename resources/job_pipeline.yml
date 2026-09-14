@@ -1,0 +1,76 @@
+resources:
+  jobs:
+    pipeline_full:
+      name: pipeline_full
+
+      # A fonte publica dois arquivos por ano e revisa o semestre corrente.
+      # Agendamento mensal, pausado: em ambiente de desenvolvimento um disparo
+      # automatico consome cota sem ninguem esperando por ele.
+      schedule:
+        quartz_cron_expression: "0 0 6 1 * ?"
+        timezone_id: America/Sao_Paulo
+        pause_status: PAUSED
+
+      tasks:
+        - task_key: setup
+          notebook_task:
+            notebook_path: ../src/00_setup_catalog.py
+            base_parameters:
+              catalog: ${var.catalog}
+
+        - task_key: landing
+          depends_on:
+            - task_key: setup
+          notebook_task:
+            notebook_path: ../src/10_landing_anp.py
+            base_parameters:
+              catalog: ${var.catalog}
+
+        - task_key: bronze
+          depends_on:
+            - task_key: landing
+          notebook_task:
+            notebook_path: ../src/20_bronze_autoloader.py
+            base_parameters:
+              catalog: ${var.catalog}
+              full_refresh: "false"
+
+        - task_key: silver_clean
+          depends_on:
+            - task_key: bronze
+          notebook_task:
+            notebook_path: ../src/30_silver_clean.py
+            base_parameters:
+              catalog: ${var.catalog}
+
+        - task_key: silver_brand
+          depends_on:
+            - task_key: silver_clean
+          notebook_task:
+            notebook_path: ../src/35_silver_brand.py
+            base_parameters:
+              catalog: ${var.catalog}
+
+        - task_key: silver_station
+          depends_on:
+            - task_key: silver_brand
+          notebook_task:
+            notebook_path: ../src/40_silver_station.py
+            base_parameters:
+              catalog: ${var.catalog}
+
+        - task_key: gold_dimensions
+          depends_on:
+            - task_key: silver_station
+          notebook_task:
+            notebook_path: ../src/50_gold_dimensions.py
+            base_parameters:
+              catalog: ${var.catalog}
+
+        - task_key: gold_fact
+          depends_on:
+            - task_key: gold_dimensions
+          notebook_task:
+            notebook_path: ../src/60_gold_fact.py
+            base_parameters:
+              catalog: ${var.catalog}

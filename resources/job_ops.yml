@@ -1,0 +1,12 @@
+resources:
+  jobs:
+    ops_optimize:
+      name: ops_optimize
+      tasks:
+        - task_key: measure
+          notebook_task:
+            notebook_path: ../src/70_ops_optimize.py
+            base_parameters:
+              catalog: ${var.catalog}
+              repeticoes: "4"
+              aplicar_clustering: "true"
