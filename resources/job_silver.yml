@@ -1,0 +1,10 @@
+resources:
+  jobs:
+    silver_build:
+      name: silver_build
+      tasks:
+        - task_key: clean
+          notebook_task:
+            notebook_path: ../src/30_silver_clean.py
+            base_parameters:
+              catalog: ${var.catalog}
