@@ -16,3 +16,6 @@ resources:
             notebook_path: ../src/20_bronze_autoloader.py
             base_parameters:
               catalog: ${var.catalog}
+              # Reprocessamento da bronze e sempre explicito: o valor padrao
+              # mantem o controle de arquivos ja lidos do Auto Loader.
+              full_refresh: "false"
