@@ -8,3 +8,11 @@ resources:
             notebook_path: ../src/30_silver_clean.py
             base_parameters:
               catalog: ${var.catalog}
+
+        - task_key: station
+          depends_on:
+            - task_key: clean
+          notebook_task:
+            notebook_path: ../src/40_silver_station.py
+            base_parameters:
+              catalog: ${var.catalog}
