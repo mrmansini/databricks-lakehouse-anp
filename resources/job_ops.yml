@@ -20,3 +20,13 @@ resources:
             base_parameters:
               catalog: ${var.catalog}
               repeticoes: "3"
+
+    ops_governance:
+      name: ops_governance
+      tasks:
+        - task_key: grants_e_metadados
+          notebook_task:
+            notebook_path: ../src/90_governance.py
+            base_parameters:
+              catalog: ${var.catalog}
+              grupo_leitura: anp_readers
