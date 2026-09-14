@@ -100,7 +100,7 @@ resources/
   job_silver.yml               limpeza, bandeiras e dimensão de postos
   job_gold.yml                 dimensões, fato e resumo semanal
   job_pipeline.yml             pipeline completo encadeado, agendamento pausado
-  job_ops.yml                  medições de organização de arquivos e de motor
+  job_ops.yml                  medições, governança e controle de acesso
 src/
   00_setup_catalog.py          namespace do projeto
   10_landing_anp.py            baixa os zips e extrai para o volume
@@ -112,6 +112,7 @@ src/
   60_gold_fact.py              fato e resumo semanal
   70_ops_optimize.py           organização de arquivos e tempo de consulta
   80_bench_spark_pandas.py     mesmo resumo em Spark e em duas versões de pandas
+  90_governance.py             comentários de metadados e controle de acesso
 .github/workflows/deploy.yml   validate e deploy do bundle
 ```
 
@@ -162,6 +163,15 @@ versionado.
 **A tabela do fato nasce sem particionamento nem clustering.** A otimização é
 comparada contra esse estado.
 
+**O grupo de leitura alcança apenas a camada de consumo.** Quem usa o resultado
+não precisa do caminho que levou até ele, então `bronze`, `silver` e `ops` ficam
+de fora. Os privilégios são revogados antes de concedidos, o que faz o estado
+final depender do que está declarado no notebook e não do que já existia antes.
+
+**Os comentários de tabela e coluna ficam no catálogo, e não só no código.** No
+Unity Catalog eles aparecem na busca de dados, para quem chegou ao projeto sem
+nunca ter aberto o repositório.
+
 ---
 
 ## Achados
@@ -211,6 +221,16 @@ diferença a um fator que se explica pelo custo de carregar os dados na memória
 **Ganho de desempenho medido sem controle mede o ambiente.** Ver a seção de
 Medições: o `OPTIMIZE` aparentava 27% a 38% de ganho sobre uma tabela cujo layout
 não tinha mudado um único byte.
+
+**O Unity Catalog filtra a listagem, e não apenas a leitura.** Uma identidade com
+acesso somente à camada de consumo não vê `bronze`, `silver` e `ops` ao listar os
+schemas do catálogo. Elas não aparecem como bloqueadas, simplesmente não aparecem.
+No PostgreSQL, um usuário sem privilégio ainda enxerga o schema no catálogo do
+banco.
+
+**Permissão de dado e permissão de motor são separadas.** `SELECT` na tabela não
+autoriza usar o SQL warehouse que executa a consulta. São dois controles
+independentes, enquanto no PostgreSQL o `GRANT` na tabela resolve tudo.
 
 **As semanas do começo e do fim da série ficam em 75,1% da cobertura típica.**
 Medido comparando a soma de observações por semana contra a mediana das semanas
@@ -286,6 +306,22 @@ inteiro em Spark. Com os dados já na memória, a distância cai de 6,4 para 1,9
 vezes, o que muda a resposta conforme o processo seja um job em lote ou um
 serviço que fica no ar.
 
+### O controle de acesso foi testado com outra identidade
+
+Listar os privilégios mostra o que foi pedido, e não o que acontece quando alguém
+tenta ler. A conferência usou um service principal membro apenas de `anp_readers`,
+com credenciais próprias.
+
+| Comando | Resultado |
+|---|---|
+| `catalogs list` | `anp` aparece |
+| `schemas list anp` | apenas `gold` e `information_schema` |
+| `tables list anp gold` | as cinco tabelas |
+| `tables list anp bronze` | `User does not have USE SCHEMA on Schema 'anp.bronze'` |
+
+A última linha é a que prova o controle. As três primeiras mostram que o acesso
+concedido funciona, e a quarta mostra que o acesso não concedido é recusado.
+
 ---
 
 ## Onde cada arquitetura difere
@@ -295,7 +331,10 @@ serviço que fica no ar.
 | Vigências que não podem se sobrepor | `EXCLUDE USING gist` recusa a escrita errada | não existe equivalente, virou conferência depois da carga |
 | Fim de vigência em aberto | `infinity` | `9999-12-31`, para poder ser lido por outros motores |
 | Controle do que já foi carregado | catálogo de arquivos com carga idempotente | Auto Loader com checkpoint em volume |
-| Controle de acesso | usuários `owner` e `bi_reader` separados no banco | Unity Catalog |
+| Controle de acesso | usuários `owner` e `bi_reader` separados no banco | grupo no Unity Catalog, com privilégio por catálogo, schema e tabela |
+| Visibilidade do que não se pode ler | o schema continua visível no catálogo do banco | some da listagem |
+| Permissão para executar a consulta | incluída no `GRANT` da tabela | controle separado, no SQL warehouse |
+| Documentação do modelo | comentários nas colunas do banco | comentários no Unity Catalog, visíveis na busca de dados |
 | Idempotência | migrações numeradas com registro e checksum | bundle declarativo aplicado por deploy |
 | Organização física | particionamento por trimestre | um arquivo de 37,4 MB, `OPTIMIZE` e clustering sem efeito medível |
 | Orquestração | GitHub Actions com cron | Lakeflow Job com dependências entre tarefas |
@@ -325,6 +364,10 @@ justamente porque a constraint do banco não existe aqui.
   cota diária. As cargas completas foram executadas uma vez por etapa.
 - A dimensão de posto é montada de uma vez a partir do histórico completo. A carga
   incremental por `MERGE` ainda não foi comparada com ela.
+- A API de execução de instruções SQL não está disponível no Free Edition, nem
+  para o administrador do workspace. O controle de acesso foi conferido pela API
+  do Unity Catalog, que é quem decide a permissão, e não pelo motor que executa a
+  consulta.
 
 ---
 
@@ -357,6 +400,11 @@ desenvolvimento um disparo automático consome cota sem ninguém esperando por e
 
 As medições ficam nos jobs `ops_optimize` e `ops_bench_engines`, e não fazem parte
 do pipeline de dados.
+
+O job `ops_governance` aplica os comentários de metadados e o controle de acesso.
+Ele depende de um grupo criado antes em Settings, Identity and access, Groups, com
+o nome passado no parâmetro `grupo_leitura`. O notebook confere se o grupo existe
+antes de escrever qualquer coisa.
 
 O parâmetro `full_refresh` do `bronze_ingest` descarta o checkpoint do Auto Loader
 e reprocessa o volume inteiro. O padrão é `false`.
