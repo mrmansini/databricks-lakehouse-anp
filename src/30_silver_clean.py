@@ -5,6 +5,9 @@
 # derrubar o job ou desaparecer.
 # A deduplicacao nao acontece aqui: ops.silver_key_conflicts mede se as chaves
 # repetidas sao identicas ou divergem no preco, e a regra e decidida na camada gold.
+# Os campos de texto tem espacos internos colapsados, e nao apenas aparados: a
+# fonte corrige grafia entre arquivos semestrais, e um espaco duplo que some abre
+# versao nova na dimensao de postos sem que nada tenha mudado no mundo real.
 # Executado pelo job declarado em resources/job_silver.yml.
 
 # COMMAND ----------
@@ -48,21 +51,21 @@ spark.sql(
     f"""
     CREATE OR REPLACE TEMPORARY VIEW convertido AS
     SELECT
-        upper(trim(region))                                          AS region,
-        upper(trim(state))                                           AS state,
-        trim(city)                                                   AS city,
-        trim(reseller_name)                                          AS reseller_name,
+        upper(regexp_replace(trim(region), ' +', ' '))               AS region,
+        upper(regexp_replace(trim(state), ' +', ' '))                AS state,
+        regexp_replace(trim(city), ' +', ' ')                        AS city,
+        regexp_replace(trim(reseller_name), ' +', ' ')               AS reseller_name,
         regexp_replace(reseller_cnpj, '[^0-9]', '')                  AS reseller_cnpj,
-        trim(street_name)                                            AS street_name,
-        trim(street_number)                                          AS street_number,
-        trim(neighborhood)                                           AS neighborhood,
+        regexp_replace(trim(street_name), ' +', ' ')                 AS street_name,
+        regexp_replace(trim(street_number), ' +', ' ')               AS street_number,
+        regexp_replace(trim(neighborhood), ' +', ' ')                AS neighborhood,
         regexp_replace(postal_code, '[^0-9]', '')                    AS postal_code,
-        trim(product)                                                AS product,
+        regexp_replace(trim(product), ' +', ' ')                     AS product,
         try_to_date(collection_date, 'dd/MM/yyyy')                   AS collection_date,
         try_cast(replace(sale_price, ',', '.') AS DECIMAL(10,3))     AS sale_price,
         try_cast(replace(purchase_price, ',', '.') AS DECIMAL(10,3)) AS purchase_price,
-        trim(unit_of_measure)                                        AS unit_of_measure,
-        upper(trim(brand))                                           AS brand,
+        regexp_replace(trim(unit_of_measure), ' +', ' ')             AS unit_of_measure,
+        upper(regexp_replace(trim(brand), ' +', ' '))                AS brand,
         collection_date                                              AS collection_date_raw,
         sale_price                                                   AS sale_price_raw,
         reseller_cnpj                                                AS reseller_cnpj_raw,

@@ -7,6 +7,9 @@
 # As semanas de borda sao marcadas, nao removidas: elas sao truncadas por
 # construcao, mas apagar linha na origem tira de quem consome a chance de
 # discordar do criterio.
+# O mes do rollup vem do inicio da semana, e nao da data da coleta: numa semana
+# que atravessa a virada de mes, a data individual variaria dentro do grupo e a
+# mesma combinacao de semana, municipio e produto se dividiria em duas linhas.
 # Sem particionamento ou clustering nesta etapa: a tabela nasce simples e a
 # otimizacao e medida depois, contra este estado como linha de base.
 # Executado pelo job declarado em resources/job_gold.yml.
@@ -83,7 +86,7 @@ spark.sql(
             dt.survey_week_key,
             dt.week_start_date,
             dt.iso_year,
-            dt.month_start_date,
+            date_trunc('MONTH', dt.week_start_date)::DATE AS month_start_date,
             c.city_key,
             f.product_key,
             count(*)                        AS observations,
