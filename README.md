@@ -108,6 +108,7 @@ src/
   30_silver_clean.py           tipagem, normalização e tabela de rejeitos
   35_silver_brand.py           catálogo de bandeiras e mapa de rótulos
   40_silver_station.py         remoção de repetidas e SCD2 com verificações
+  45_scd2_merge.py             carga incremental por MERGE, comparada com a de uma vez
   50_gold_dimensions.py        calendário, município e produto
   60_gold_fact.py              fato e resumo semanal
   70_ops_optimize.py           organização de arquivos e tempo de consulta
@@ -306,6 +307,47 @@ inteiro em Spark. Com os dados já na memória, a distância cai de 6,4 para 1,9
 vezes, o que muda a resposta conforme o processo seja um job em lote ou um
 serviço que fica no ar.
 
+### Carga incremental por `MERGE` contra montagem de uma vez
+
+A dimensão de postos foi montada duas vezes. Uma de uma vez só, a partir de todo o
+histórico. Outra até 01/01/2026, com o restante aplicado por `MERGE`, uma data de
+coleta por vez.
+
+O resultado é idêntico: 17.631 versões dos dois lados, e `EXCEPT` nos dois
+sentidos devolve zero comparando chave natural, vigência, resumo dos atributos e
+situação da versão.
+
+| Etapa | tempo |
+|---|---:|
+| Montagem de uma vez, três anos de histórico | 25,6 s |
+| 136 lotes por data, seis meses | 910 s |
+| Custo por lote (mediana) | 6,69 s |
+| Custo por lote (mínimo) | 3,91 s |
+
+O mínimo de 3,91 s por lote é o custo fixo de uma transação Delta, independente de
+quantas linhas mudam. Numa tabela de 17 mil linhas, o trabalho não está nos dados.
+
+Daí saem duas leituras, e só a segunda costuma aparecer em material introdutório:
+
+- Para recarregar histórico, reconstruir vence com folga. São 25,6 s contra 910 s,
+  uma diferença de 36 vezes.
+- Para a operação do dia a dia, o incremental vence. Um lote custa 6,69 s contra
+  25,6 s de reconstrução, quase 4 vezes menos.
+- O ponto de equilíbrio fica por volta de quatro dias acumulados. Quem passar disso
+  sem rodar deve reconstruir em vez de tentar alcançar o atraso lote a lote.
+
+O `MERGE` do Delta recusa quando a mesma chave aparece mais de uma vez na origem,
+o que obriga a aplicação a ser por data de coleta. Cada lote gera uma versão da
+tabela, e seis meses de carga produziram 146 versões. É o outro lado do time
+travel, que normalmente é apresentado só pelo lado bom.
+
+O histórico dessa tabela também traz um `OPTIMIZE` que ninguém executou, removendo
+21 arquivos. A otimização preditiva está ativa no workspace, o que significa que a
+comparação de organização de arquivos descrita acima tinha a plataforma agindo em
+paralelo.
+
+---
+
 ### O controle de acesso foi testado com outra identidade
 
 Listar os privilégios mostra o que foi pedido, e não o que acontece quando alguém
@@ -338,6 +380,8 @@ concedido funciona, e a quarta mostra que o acesso não concedido é recusado.
 | Idempotência | migrações numeradas com registro e checksum | bundle declarativo aplicado por deploy |
 | Organização física | particionamento por trimestre | um arquivo de 37,4 MB, `OPTIMIZE` e clustering sem efeito medível |
 | Orquestração | GitHub Actions com cron | Lakeflow Job com dependências entre tarefas |
+| Atualização da dimensão versionada | funções de carga com chave natural | `MERGE` por data de coleta, ou reconstrução, conforme o volume acumulado |
+| Histórico de versões da tabela | ausente, o estado é o atual | time travel do Delta, com uma versão por operação |
 
 A comparação deixa explícito o ponto central. No PostgreSQL a integridade é
 responsabilidade do banco e a escrita errada simplesmente não acontece. No Delta
@@ -362,8 +406,10 @@ justamente porque a constraint do banco não existe aqui.
   Lakehouse Federation enquanto usar `infinity`.
 - O Free Edition oferece apenas processamento serverless, sem R nem Scala, com
   cota diária. As cargas completas foram executadas uma vez por etapa.
-- A dimensão de posto é montada de uma vez a partir do histórico completo. A carga
-  incremental por `MERGE` ainda não foi comparada com ela.
+- A otimização preditiva está ativa no workspace e reorganiza arquivos por conta
+  própria. As medições de organização de arquivos convivem com isso.
+- O pipeline em produção monta a dimensão de postos de uma vez. O caminho
+  incremental existe e foi comparado, mas o volume atual não justifica usá-lo.
 - A API de execução de instruções SQL não está disponível no Free Edition, nem
   para o administrador do workspace. O controle de acesso foi conferido pela API
   do Unity Catalog, que é quem decide a permissão, e não pelo motor que executa a
@@ -400,6 +446,9 @@ desenvolvimento um disparo automático consome cota sem ninguém esperando por e
 
 As medições ficam nos jobs `ops_optimize` e `ops_bench_engines`, e não fazem parte
 do pipeline de dados.
+
+O job `ops_scd2_merge` compara a carga incremental com a montagem de uma vez,
+gravando o resultado em `ops.dim_station_merge` sem tocar na tabela do pipeline.
 
 O job `ops_governance` aplica os comentários de metadados e o controle de acesso.
 Ele depende de um grupo criado antes em Settings, Identity and access, Groups, com
