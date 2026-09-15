@@ -30,3 +30,13 @@ resources:
             base_parameters:
               catalog: ${var.catalog}
               grupo_leitura: anp_readers
+
+    ops_scd2_merge:
+      name: ops_scd2_merge
+      tasks:
+        - task_key: merge_incremental
+          notebook_task:
+            notebook_path: ../src/45_scd2_merge.py
+            base_parameters:
+              catalog: ${var.catalog}
+              data_corte: "2026-01-01"
