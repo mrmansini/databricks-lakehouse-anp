@@ -465,3 +465,7 @@ implementação de referência.
 ---
 
 Identificadores em inglês, documentação em português.
+
+---
+
+📧 felipemansini@hotmail.com · 💼 [LinkedIn](https://linkedin.com/in/felipemansini) · 📔 [Portfólio no Notion](https://felipemansini.notion.site/Portfolio-Felipe-Mansini-3c9a93018cab80bf9f9cc1105cce0e35)
